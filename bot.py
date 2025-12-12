@@ -11,7 +11,6 @@ import sqlite3
 from datetime import datetime
 from typing import Optional, Dict, List, Union, Any, Set
 
-# Сторонние библиотеки
 import aiohttp
 import customtkinter as ctk
 from pyrogram import Client
@@ -23,21 +22,17 @@ import matplotlib.pyplot as plt
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 import matplotlib
 
-# Настройка matplotlib для работы с GUI
 matplotlib.use("TkAgg")
 
-# --- ГЛОБАЛЬНЫЕ ПЕРЕМЕННЫЕ ---
 log_queue = queue.Queue()
 stop_event = threading.Event()
 DB_FILE = "bot_data.db"
 KEY_FILE = "secret.key"
 CONFIG_FILE = "config.enc"
 
-# --- НАСТРОЙКИ UI ПО УМОЛЧАНИЮ ---
 ctk.set_appearance_mode("Dark")
 DEFAULT_ACCENT = "#9D00FF"
 
-# --- ЛОГГЕР ---
 class QueueHandler(logging.Handler):
     def emit(self, record):
         msg = self.format(record)
@@ -55,7 +50,6 @@ def setup_logger():
 
 logger = setup_logger()
 
-# --- SECURITY (AES-256) ---
 class SecurityManager:
     def __init__(self):
         self.key = self._load_or_create_key()
@@ -92,7 +86,6 @@ class SecurityManager:
             logger.error(f"Ошибка дешифровки конфига: {e}")
             return {}
 
-# --- DATABASE (SQLite) ---
 class DatabaseManager:
     def __init__(self):
         self.conn = sqlite3.connect(DB_FILE, check_same_thread=False)
@@ -147,7 +140,6 @@ class DatabaseManager:
         result = self.cursor.fetchone()[0]
         return result if result else 0
 
-# --- API HELPERS (LOLZ) ---
 class LolzAPI:
     def __init__(self, token: str):
         self.base_url = "https://prod-api.lolz.live"
@@ -178,7 +170,6 @@ class LolzAPI:
     async def create_comment(self, post_id, text):
         await self._request("POST", f"/posts/{post_id}/comments", json={"comment_body": text})
 
-# --- OLD PARSER LOGIC (RESTORED) ---
 class TelegramLinkExtractor:
     @staticmethod
     def extract(text: str) -> List[str]:
@@ -200,7 +191,6 @@ class TelegramLinkExtractor:
             return channel, message_id
         return None
 
-# --- БОТ ЯДРО ---
 class TelegramStarsBot:
     def __init__(self, config: dict, db: DatabaseManager):
         self.config = config
@@ -215,7 +205,6 @@ class TelegramStarsBot:
     async def notify_admin(self, message: str):
         if not self.config.get("admin_notify", False): return
         
-        # Если есть Bot Token - шлем через него
         if self.config.get("bot_token") and self.config.get("admin_id"):
             try:
                 url = f"https://api.telegram.org/bot{self.config['bot_token']}/sendMessage"
@@ -225,7 +214,6 @@ class TelegramStarsBot:
                         if r.status != 200: logger.error(f"Notify Error: {r.status}")
             except Exception as e: logger.error(f"Notify Error: {e}")
         else:
-            # Иначе Self-message
             try:
                 target = self.config.get("admin_id") or "me"
                 await self.client.send_message(target, f"🤖 {message}")
@@ -237,7 +225,6 @@ class TelegramStarsBot:
             return False
         
         try:
-            # Логика из первой версии: если ID нет, ищем последний пост
             if message_id is None:
                 async for message in self.client.get_chat_history(f"@{channel}", limit=1):
                     message_id = message.id
@@ -246,7 +233,6 @@ class TelegramStarsBot:
             
             await self.client.send_paid_reaction(f"@{channel}", message_id, int(self.config["stars_count"]))
             
-            # Логируем
             self.db.log_transaction(int(self.config["stars_count"]), channel)
             logger.info(f"⭐ Sent {self.config['stars_count']} stars to @{channel}")
             await self.notify_admin(f"✅ Отправлено <b>{self.config['stars_count']}</b> ⭐️ в @{channel}")
@@ -261,7 +247,6 @@ class TelegramStarsBot:
             return False
 
     async def _process_single_post(self, post: Dict[str, Any]):
-        # ЛОГИКА 1-В-1 ИЗ ПЕРВОЙ ВЕРСИИ
         post_id = post.get("post_id")
         
         if not post_id or self.db.is_processed(post_id):
@@ -292,14 +277,12 @@ class TelegramStarsBot:
             parsed_link = TelegramLinkExtractor.parse(link)
             if parsed_link:
                 channel, message_id = parsed_link
-                # Отправляем без проверок на дубли (как в v1)
                 if await self.send_stars_reaction(channel, message_id):
                     successful_reactions += 1
                 await asyncio.sleep(1)
         
         if successful_reactions > 0 and self.config["enable_reply"]:
             await asyncio.sleep(int(self.config["api_delay"]))
-            # Старый добрый рандом
             replies = self.config.get("reply_templates", "Done").split("||")
             reply_message = random.choice(replies).strip()
             await self.lolz.create_comment(post_id, reply_message)
@@ -331,7 +314,6 @@ class TelegramStarsBot:
                 else:
                     logger.info("💤 No new posts...")
                 
-                # Wait loop
                 for _ in range(int(self.config["check_interval"])):
                     if stop_event.is_set(): break
                     await asyncio.sleep(1)
@@ -344,7 +326,6 @@ class TelegramStarsBot:
             await self.client.stop()
         logger.info("🛑 Bot Stopped.")
 
-# --- GUI ПРИЛОЖЕНИЕ ---
 class App(ctk.CTk):
     def __init__(self):
         super().__init__()
@@ -393,7 +374,6 @@ class App(ctk.CTk):
         self.btn_tray.pack(pady=20, padx=10, fill="x", side="bottom")
 
     def _init_pages(self):
-        # 1. Dashboard
         self.frame_dash = ctk.CTkFrame(self, corner_radius=0, fg_color="transparent")
         self.stats_container = ctk.CTkFrame(self.frame_dash, fg_color="transparent")
         self.stats_container.pack(fill="x", padx=20, pady=20)
@@ -413,7 +393,6 @@ class App(ctk.CTk):
         self.graph_frame = ctk.CTkFrame(self.frame_dash)
         self.graph_frame.pack(fill="both", expand=True, padx=20, pady=(10, 20))
 
-        # 2. Settings
         self.frame_settings = ctk.CTkScrollableFrame(self, corner_radius=0, label_text="Настройки")
         self.entries = {}
         fields = [
@@ -425,7 +404,7 @@ class App(ctk.CTk):
             ("bot_token", "Bot Token (Optional)"),
             ("start_page", "Start Page (Def: 1)"),
             ("stars_count", "Stars Qty"), 
-            ("reply_templates", "Replies (Разделитель || )") # Вернул старый разделитель
+            ("reply_templates", "Replies (Разделитель || )")
         ]
         for k, name in fields:
             ctk.CTkLabel(self.frame_settings, text=name, anchor="w").pack(fill="x", padx=10)
@@ -442,12 +421,10 @@ class App(ctk.CTk):
 
         ctk.CTkButton(self.frame_settings, text="Сохранить", command=self.save_config).pack(pady=20)
 
-        # 3. Console
         self.frame_console = ctk.CTkFrame(self, corner_radius=0)
         self.console = ctk.CTkTextbox(self.frame_console, font=("Consolas", 12), text_color="#00FF00", fg_color="#050505")
         self.console.pack(fill="both", expand=True, padx=10, pady=10)
 
-        # 4. Theme
         self.frame_theme = ctk.CTkFrame(self, corner_radius=0)
         ctk.CTkLabel(self.frame_theme, text="Настройка цвета интерфейса", font=("Arial", 16)).pack(pady=20)
         
