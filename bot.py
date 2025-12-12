@@ -401,10 +401,10 @@ class App(ctk.CTk):
             ("lolz_token", "Lolz Token"),
             ("forum_thread_id", "Thread ID"), 
             ("admin_id", "TG User ID"),
-            ("bot_token", "Bot Token (Optional)"),
+            ("bot_token", "Bot Token (из @Botfather)"),
             ("start_page", "Start Page (Def: 1)"),
-            ("stars_count", "Stars Qty"), 
-            ("reply_templates", "Replies (Разделитель || )")
+            ("stars_count", "Количество звезд (1,3,5 итд"), 
+            ("reply_templates", "Ответы (Разделитель || )")
         ]
         for k, name in fields:
             ctk.CTkLabel(self.frame_settings, text=name, anchor="w").pack(fill="x", padx=10)
