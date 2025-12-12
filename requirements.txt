@@ -1,0 +1,8 @@
+aiohttp
+customtkinter
+cryptography
+matplotlib
+Pillow
+pystray
+pyrofork
+tgcrypto
