@@ -8,7 +8,7 @@ import queue
 import sys
 import random
 import sqlite3
-import webbrowser 
+import webbrowser
 from datetime import datetime
 from typing import Optional, Dict, List, Union, Any, Set
 
@@ -34,10 +34,11 @@ CONFIG_FILE = "config.enc"
 ctk.set_appearance_mode("Dark")
 DEFAULT_ACCENT = "#9D00FF"
 
+#  ОБНОВЛЕННЫЙ ЛОГГЕР ЦВЕТОВ 
 class QueueHandler(logging.Handler):
     def emit(self, record):
         msg = self.format(record)
-        log_queue.put(msg)
+        log_queue.put((record.levelname, msg))
 
 def setup_logger():
     logger = logging.getLogger("BotLogger")
@@ -205,14 +206,12 @@ class TelegramStarsBot:
 
     async def notify_admin(self, message: str):
         if not self.config.get("admin_notify", False): return
-        
         if self.config.get("bot_token") and self.config.get("admin_id"):
             try:
                 url = f"https://api.telegram.org/bot{self.config['bot_token']}/sendMessage"
                 payload = {"chat_id": self.config["admin_id"], "text": f"🤖 {message}", "parse_mode": "HTML"}
                 async with aiohttp.ClientSession() as session:
-                    async with session.post(url, json=payload) as r:
-                        if r.status != 200: logger.error(f"Notify Error: {r.status}")
+                    await session.post(url, json=payload)
             except Exception as e: logger.error(f"Notify Error: {e}")
         else:
             try:
@@ -222,7 +221,7 @@ class TelegramStarsBot:
 
     async def send_stars_reaction(self, channel: str, message_id: Optional[int] = None) -> bool:
         if not hasattr(self.client, 'send_paid_reaction'):
-            logger.error("Критическая ошибка: Версия Pyrogram (Pyrofork) не поддерживает платные реакции! Обновите библиотеку: pip install -U pyrofork")
+            logger.error("Ошибка: Обновите библиотеку! pip install -U pyrofork")
             return False
         
         try:
@@ -233,12 +232,10 @@ class TelegramStarsBot:
                 if message_id is None: return False
             
             await self.client.send_paid_reaction(f"@{channel}", message_id, int(self.config["stars_count"]))
-            
             self.db.log_transaction(int(self.config["stars_count"]), channel)
-            logger.info(f"⭐ Отправлено {self.config['stars_count']} звезд в @{channel}")
+            logger.info(f"✅ Отправлено {self.config['stars_count']} звезд в @{channel}")
             await self.notify_admin(f"✅ Отправлено <b>{self.config['stars_count']}</b> ⭐️ в @{channel}")
             return True
-
         except FloodWait as e:
             logger.warning(f"FloodWait: ожидание {e.x} сек.")
             await asyncio.sleep(e.x + 2)
@@ -249,10 +246,8 @@ class TelegramStarsBot:
 
     async def _process_single_post(self, post: Dict[str, Any]):
         post_id = post.get("post_id")
+        if not post_id or self.db.is_processed(post_id): return
         
-        if not post_id or self.db.is_processed(post_id):
-            return
-
         logger.info(f"🔍 Проверка поста ID: {post_id}")
         
         if self.config["skip_comments"]:
@@ -263,13 +258,11 @@ class TelegramStarsBot:
         
         post_content = post.get('post_body_html') or post.get('post_body')
         if not post_content:
-            self.db.mark_processed(post_id)
-            return
+            self.db.mark_processed(post_id); return
 
         links = TelegramLinkExtractor.extract(post_content)
         if not links:
-            self.db.mark_processed(post_id)
-            return
+            self.db.mark_processed(post_id); return
 
         successful_reactions = 0
         for link in links:
@@ -288,42 +281,36 @@ class TelegramStarsBot:
             await self.lolz.create_comment(post_id, reply_message)
 
         self.db.mark_processed(post_id)
-        logger.info(f"✅ Пост {post_id} полностью обработан.")
+        logger.info(f"✅ Пост {post_id} обработан.")
 
     async def process(self):
         logger.info(f"🚀 Бот запущен. Страница: {self.start_page}")
         self.client = Client("secure_session", api_id=self.config["api_id"], api_hash=self.config["api_hash"])
-        
         try:
             await self.client.start()
         except Exception as e:
-            logger.critical(f"Ошибка авторизации: {e}")
+            logger.error(f"Ошибка авторизации: {e}")
             return
 
         while not stop_event.is_set():
             try:
                 posts, _ = await self.lolz.get_thread_posts(self.config["forum_thread_id"], self.start_page)
-                
                 if posts:
                     logger.info(f"📄 Обработка страницы {self.start_page}...")
                     for post in reversed(posts):
                         if stop_event.is_set(): break
                         await self._process_single_post(post)
-                    
-                    self.start_page += 1 # Переход на следующую страницу
-                    logger.info(f"➡️ Переход к странице {self.start_page}")
+                    self.start_page += 1
+                    logger.info(f"➡️ Переход на страницу: {self.start_page}")
                 else:
-                    logger.info("💤 Новых постов нет, ожидание...")
+                    logger.info(f"💤 Страница {self.start_page} пуста. Ожидание...")
                     for _ in range(int(self.config["check_interval"])):
                         if stop_event.is_set(): break
                         await asyncio.sleep(1)
-            
             except Exception as e:
-                logger.error(f"Критическая ошибка цикла: {e}")
-                await asyncio.sleep(5)
+                logger.error(f"Ошибка цикла: {e}"); await asyncio.sleep(5)
 
-        if self.client and self.client.is_connected:
-            await self.client.stop()
+        if self.client and self.client.is_connected: await self.client.stop()
         logger.info("🛑 Бот остановлен.")
 
 class App(ctk.CTk):
@@ -342,7 +329,6 @@ class App(ctk.CTk):
         self._init_sidebar()
         self._init_pages()
         self._load_config_to_ui()
-        
         self.after(100, self.update_logs)
 
     def _init_sidebar(self):
@@ -351,35 +337,27 @@ class App(ctk.CTk):
         self.sidebar.grid_rowconfigure(7, weight=1)
 
         ctk.CTkLabel(self.sidebar, text="B1ack Stars", font=("Impact", 24), text_color=self.accent_color).pack(pady=20)
-
         self.btns = {}
-        for name, cmd in [("Дашборд", self.show_dashboard), 
-                          ("Настройки", self.show_settings), 
-                          ("Консоль", self.show_console),
-                          ("Визуал", self.show_theme)]:
+        for name, cmd in [("Дашборд", self.show_dashboard), ("Настройки", self.show_settings), 
+                          ("Консоль", self.show_console), ("Визуал", self.show_theme)]:
             btn = ctk.CTkButton(self.sidebar, text=name, command=cmd, fg_color="transparent", 
                                 border_width=1, border_color=self.accent_color)
             btn.pack(pady=5, padx=10, fill="x")
             self.btns[name] = btn
 
         ctk.CTkLabel(self.sidebar, text="CONTROL", font=("Arial", 10, "bold"), text_color="gray").pack(pady=(20,5))
-        
         self.btn_start = ctk.CTkButton(self.sidebar, text="START BOT", fg_color="green", command=self.start_bot)
         self.btn_start.pack(pady=5, padx=10, fill="x")
-        
         self.btn_stop = ctk.CTkButton(self.sidebar, text="STOP", fg_color="#330000", state="disabled", command=self.stop_bot)
         self.btn_stop.pack(pady=5, padx=10, fill="x")
 
-        #  КНОПКА ТЕЛЕГРАМ 
-        self.btn_bug = ctk.CTkButton(self.sidebar, text="🐞 Сообщить о баге", 
-                                     fg_color="transparent", text_color="#FF5555",
-                                     hover_color="#331111", command=self.open_telegram)
+        self.btn_bug = ctk.CTkButton(self.sidebar, text="🐞 Сообщить о баге", fg_color="transparent", 
+                                     text_color="#FF5555", hover_color="#331111", command=self.open_support)
         self.btn_bug.pack(pady=(20, 5), padx=10, fill="x", side="bottom")
-
         self.btn_tray = ctk.CTkButton(self.sidebar, text="⬇ В трей", fg_color="gray20", command=self.minimize_to_tray)
         self.btn_tray.pack(pady=(5, 20), padx=10, fill="x", side="bottom")
 
-    def open_telegram(self):
+    def open_support(self):
         webbrowser.open("https://t.me/B1ackCloudSupp")
 
     def _init_pages(self):
@@ -405,181 +383,118 @@ class App(ctk.CTk):
         self.frame_settings = ctk.CTkScrollableFrame(self, corner_radius=0, label_text="Настройки")
         self.entries = {}
         fields = [
-            ("api_id", "API ID"), 
-            ("api_hash", "API Hash"), 
-            ("lolz_token", "Lolz Token"),
-            ("forum_thread_id", "Thread ID"), 
-            ("admin_id", "TG User ID"),
-            ("bot_token", "Bot Token (из @Botfather)"),
-            ("start_page", "Start Page (Def: 1)"),
-            ("stars_count", "Количество звезд (1,3,5 итд"), 
-            ("reply_templates", "Ответы (Разделитель || )")
+            ("api_id", "API ID"), ("api_hash", "API Hash"), ("lolz_token", "Lolz Token"),
+            ("forum_thread_id", "Thread ID"), ("admin_id", "TG User ID"),
+            ("bot_token", "Bot Token"), ("start_page", "Start Page"),
+            ("stars_count", "Кол-во звезд"), ("reply_templates", "Ответы (||)")
         ]
         for k, name in fields:
             ctk.CTkLabel(self.frame_settings, text=name, anchor="w").pack(fill="x", padx=10)
-            e = ctk.CTkEntry(self.frame_settings)
-            e.pack(fill="x", padx=10, pady=(0, 10))
-            self.entries[k] = e
+            e = ctk.CTkEntry(self.frame_settings); e.pack(fill="x", padx=10, pady=(0, 10)); self.entries[k] = e
         
         self.chk_reply = ctk.CTkCheckBox(self.frame_settings, text="Отвечать в теме")
         self.chk_reply.pack(anchor="w", padx=10)
-        self.chk_skip = ctk.CTkCheckBox(self.frame_settings, text="Пропускать если есть ответ")
+        self.chk_skip = ctk.CTkCheckBox(self.frame_settings, text="Пропускать с ответом")
         self.chk_skip.pack(anchor="w", padx=10, pady=10)
-        self.chk_notify = ctk.CTkCheckBox(self.frame_settings, text="Уведомлять в Telegram")
+        self.chk_notify = ctk.CTkCheckBox(self.frame_settings, text="Уведомлять в TG")
         self.chk_notify.pack(anchor="w", padx=10)
-
         ctk.CTkButton(self.frame_settings, text="Сохранить", command=self.save_config).pack(pady=20)
 
+        # КОНСОЛЬ С ЦВЕТАМИ
         self.frame_console = ctk.CTkFrame(self, corner_radius=0)
-        self.console = ctk.CTkTextbox(self.frame_console, font=("Consolas", 12), text_color="#00FF00", fg_color="#050505")
+        self.console = ctk.CTkTextbox(self.frame_console, font=("Consolas", 12), fg_color="#050505")
         self.console.pack(fill="both", expand=True, padx=10, pady=10)
+        
+        self.console._textbox.tag_config("INFO", foreground="#FFFFFF")
+        self.console._textbox.tag_config("ERROR", foreground="#FF4444")
+        self.console._textbox.tag_config("WARNING", foreground="#FFFF00")
+        self.console._textbox.tag_config("SUCCESS", foreground="#00FF00")
+        self.console._textbox.tag_config("STEP", foreground="#55AAFF")
 
         self.frame_theme = ctk.CTkFrame(self, corner_radius=0)
-        ctk.CTkLabel(self.frame_theme, text="Настройка цвета интерфейса", font=("Arial", 16)).pack(pady=20)
-        
-        self.slider_r = ctk.CTkSlider(self.frame_theme, from_=0, to=255, command=self.update_color_preview)
-        self.slider_r.pack(pady=10)
-        self.slider_g = ctk.CTkSlider(self.frame_theme, from_=0, to=255, command=self.update_color_preview)
-        self.slider_g.pack(pady=10)
-        self.slider_b = ctk.CTkSlider(self.frame_theme, from_=0, to=255, command=self.update_color_preview)
-        self.slider_b.pack(pady=10)
-        
-        self.color_preview = ctk.CTkButton(self.frame_theme, text="ПРИМЕНИТЬ ЦВЕТ", command=self.apply_theme)
-        self.color_preview.pack(pady=20)
-
+        ctk.CTkLabel(self.frame_theme, text="Цвет интерфейса", font=("Arial", 16)).pack(pady=20)
+        self.slider_r = ctk.CTkSlider(self.frame_theme, from_=0, to=255, command=self.update_color_preview); self.slider_r.pack(pady=10)
+        self.slider_g = ctk.CTkSlider(self.frame_theme, from_=0, to=255, command=self.update_color_preview); self.slider_g.pack(pady=10)
+        self.slider_b = ctk.CTkSlider(self.frame_theme, from_=0, to=255, command=self.update_color_preview); self.slider_b.pack(pady=10)
+        self.color_preview = ctk.CTkButton(self.frame_theme, text="ПРИМЕНИТЬ", command=self.apply_theme); self.color_preview.pack(pady=20)
         self.show_dashboard()
 
     def switch_frame(self, frame):
-        for f in [self.frame_dash, self.frame_settings, self.frame_console, self.frame_theme]:
-            f.grid_forget()
+        for f in [self.frame_dash, self.frame_settings, self.frame_console, self.frame_theme]: f.grid_forget()
         frame.grid(row=0, column=1, sticky="nsew", padx=10, pady=10)
 
-    def show_dashboard(self): 
-        self.switch_frame(self.frame_dash)
-        self.draw_stats()
-
+    def show_dashboard(self): self.switch_frame(self.frame_dash); self.draw_stats()
     def show_settings(self): self.switch_frame(self.frame_settings)
     def show_console(self): self.switch_frame(self.frame_console)
     def show_theme(self): self.switch_frame(self.frame_theme)
 
     def update_color_preview(self, _=None):
         r, g, b = int(self.slider_r.get()), int(self.slider_g.get()), int(self.slider_b.get())
-        hex_col = f"#{r:02x}{g:02x}{b:02x}"
-        self.color_preview.configure(fg_color=hex_col)
+        self.color_preview.configure(fg_color=f"#{r:02x}{g:02x}{b:02x}")
 
     def apply_theme(self):
         r, g, b = int(self.slider_r.get()), int(self.slider_g.get()), int(self.slider_b.get())
         self.accent_color = f"#{r:02x}{g:02x}{b:02x}"
-        self.logo_label = self.sidebar.winfo_children()[0]
-        self.logo_label.configure(text_color=self.accent_color)
+        self.sidebar.winfo_children()[0].configure(text_color=self.accent_color)
         self.lbl_total_stars.configure(text_color=self.accent_color)
-        for name, btn in self.btns.items():
-            btn.configure(border_color=self.accent_color)
+        for btn in self.btns.values(): btn.configure(border_color=self.accent_color)
 
     def draw_stats(self):
-        for widget in self.graph_frame.winfo_children():
-            widget.destroy()
-
-        data = self.db.get_stats_data()
-        total = self.db.get_total_stars()
-        
-        self.lbl_total_stars.configure(text=str(total))
-        self.lbl_money.configure(text=f"${total * 0.013:.2f}")
-
-        dates = [d[0] for d in data]
-        counts = [d[1] for d in data]
-
-        if not dates: return
-
+        for w in self.graph_frame.winfo_children(): w.destroy()
+        data, total = self.db.get_stats_data(), self.db.get_total_stars()
+        self.lbl_total_stars.configure(text=str(total)); self.lbl_money.configure(text=f"${total * 0.013:.2f}")
+        if not data: return
         fig = plt.Figure(figsize=(5, 4), dpi=100, facecolor="#2b2b2b")
-        ax = fig.add_subplot(111)
-        ax.set_facecolor("#2b2b2b")
-        ax.plot(dates, counts, marker='o', color=self.accent_color, linewidth=2)
-        ax.set_title("Активность", color="white")
-        ax.tick_params(axis='x', colors='white', rotation=45)
-        ax.tick_params(axis='y', colors='white')
-        
-        canvas = FigureCanvasTkAgg(fig, master=self.graph_frame)
-        canvas.draw()
-        canvas.get_tk_widget().pack(fill="both", expand=True)
+        ax = fig.add_subplot(111); ax.set_facecolor("#2b2b2b"); ax.plot([d[0] for d in data], [d[1] for d in data], marker='o', color=self.accent_color)
+        ax.tick_params(colors='white'); canvas = FigureCanvasTkAgg(fig, master=self.graph_frame); canvas.draw(); canvas.get_tk_widget().pack(fill="both", expand=True)
 
     def save_config(self):
         cfg = {k: v.get() for k, v in self.entries.items()}
-        cfg["enable_reply"] = bool(self.chk_reply.get())
-        cfg["skip_comments"] = bool(self.chk_skip.get())
-        cfg["admin_notify"] = bool(self.chk_notify.get())
-        cfg["check_interval"] = 30
-        cfg["api_delay"] = 5
-        self.security.save_config(cfg)
-        logger.info("💾 Конфигурация сохранена!")
+        cfg.update({"enable_reply": bool(self.chk_reply.get()), "skip_comments": bool(self.chk_skip.get()), 
+                    "admin_notify": bool(self.chk_notify.get()), "check_interval": 30, "api_delay": 5})
+        self.security.save_config(cfg); logger.info("✅ Конфигурация сохранена!")
 
     def _load_config_to_ui(self):
         if not self.config: return
         for k, e in self.entries.items():
-            if k in self.config:
-                e.delete(0, "end")
-                e.insert(0, str(self.config[k]))
+            if k in self.config: e.insert(0, str(self.config[k]))
         if self.config.get("enable_reply"): self.chk_reply.select()
         if self.config.get("skip_comments"): self.chk_skip.select()
         if self.config.get("admin_notify"): self.chk_notify.select()
 
     def update_logs(self):
         while not log_queue.empty():
-            msg = log_queue.get()
-            self.console.insert("end", msg + "\n")
+            level, msg = log_queue.get()
+            tag = level
+            if any(x in msg for x in ["✅", "⭐"]): tag = "SUCCESS"
+            elif any(x in msg for x in ["🚀", "➡️", "📄", "🔍"]): tag = "STEP"
+            self.console.insert("end", msg + "\n", tag)
             self.console.see("end")
         self.after(100, self.update_logs)
 
     def start_bot(self):
-        self.save_config()
-        self.config = self.security.load_config()
-        
-        if not self.config.get("api_id"):
-            logger.error("❌ Заполните настройки!")
-            return
-
-        stop_event.clear()
-        self.btn_start.configure(state="disabled", fg_color="gray")
-        self.btn_stop.configure(state="normal", fg_color="#FF3333")
-        self.show_console()
-        
-        thread = threading.Thread(target=self._run_bot_process, daemon=True)
-        thread.start()
+        self.save_config(); self.config = self.security.load_config()
+        if not self.config.get("api_id"): return
+        stop_event.clear(); self.btn_start.configure(state="disabled", fg_color="gray")
+        self.btn_stop.configure(state="normal", fg_color="#FF3333"); self.show_console()
+        threading.Thread(target=self._run_bot_process, daemon=True).start()
 
     def _run_bot_process(self):
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        bot = TelegramStarsBot(self.config, self.db)
-        loop.run_until_complete(bot.process())
+        loop = asyncio.new_event_loop(); asyncio.set_event_loop(loop)
+        bot = TelegramStarsBot(self.config, self.db); loop.run_until_complete(bot.process())
 
     def stop_bot(self):
-        stop_event.set()
-        self.btn_start.configure(state="normal", fg_color="green")
-        self.btn_stop.configure(state="disabled", fg_color="#330000")
-        logger.info("🛑 Остановка...")
+        stop_event.set(); self.btn_start.configure(state="normal", fg_color="green")
+        self.btn_stop.configure(state="disabled", fg_color="#330000"); logger.warning("🛑 Остановка...")
 
     def minimize_to_tray(self):
-        self.withdraw()
-        image = Image.new('RGB', (64, 64), color=(73, 109, 137))
-        d = ImageDraw.Draw(image)
-        d.text((10,10), "S", fill=(255,255,0))
-        
-        menu = pystray.Menu(
-            pystray.MenuItem("Открыть", self.show_window),
-            pystray.MenuItem("Выход", self.quit_app)
-        )
-        self.tray_icon = pystray.Icon("name", image, "B1ackStars", menu)
-        threading.Thread(target=self.tray_icon.run, daemon=True).start()
+        self.withdraw(); image = Image.new('RGB', (64, 64), color=(73, 109, 137))
+        d = ImageDraw.Draw(image); d.text((10,10), "S", fill=(255,255,0))
+        menu = pystray.Menu(pystray.MenuItem("Открыть", self.show_window), pystray.MenuItem("Выход", self.quit_app))
+        self.tray_icon = pystray.Icon("name", image, "B1ackStars", menu); threading.Thread(target=self.tray_icon.run, daemon=True).start()
 
-    def show_window(self, icon, item):
-        self.tray_icon.stop()
-        self.after(0, self.deiconify)
-
-    def quit_app(self, icon, item):
-        self.tray_icon.stop()
-        self.destroy()
-        sys.exit()
+    def show_window(self, icon, item): self.tray_icon.stop(); self.after(0, self.deiconify)
+    def quit_app(self, icon, item): self.tray_icon.stop(); self.destroy(); sys.exit()
 
 if __name__ == "__main__":
-    app = App()
-    app.mainloop()
+    app = App(); app.mainloop()
