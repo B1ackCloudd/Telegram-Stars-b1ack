@@ -8,6 +8,7 @@ import queue
 import sys
 import random
 import sqlite3
+import webbrowser 
 from datetime import datetime
 from typing import Optional, Dict, List, Union, Any, Set
 
@@ -221,7 +222,7 @@ class TelegramStarsBot:
 
     async def send_stars_reaction(self, channel: str, message_id: Optional[int] = None) -> bool:
         if not hasattr(self.client, 'send_paid_reaction'):
-            logger.error("Update Pyrofork!")
+            logger.error("Критическая ошибка: Версия Pyrogram (Pyrofork) не поддерживает платные реакции! Обновите библиотеку: pip install -U pyrofork")
             return False
         
         try:
@@ -234,16 +235,16 @@ class TelegramStarsBot:
             await self.client.send_paid_reaction(f"@{channel}", message_id, int(self.config["stars_count"]))
             
             self.db.log_transaction(int(self.config["stars_count"]), channel)
-            logger.info(f"⭐ Sent {self.config['stars_count']} stars to @{channel}")
+            logger.info(f"⭐ Отправлено {self.config['stars_count']} звезд в @{channel}")
             await self.notify_admin(f"✅ Отправлено <b>{self.config['stars_count']}</b> ⭐️ в @{channel}")
             return True
 
         except FloodWait as e:
-            logger.warning(f"FloodWait: {e.x}s")
+            logger.warning(f"FloodWait: ожидание {e.x} сек.")
             await asyncio.sleep(e.x + 2)
             return False
         except Exception as e:
-            logger.error(f"Send Error ({channel}): {e}")
+            logger.error(f"Ошибка отправки (@{channel}): {e}")
             return False
 
     async def _process_single_post(self, post: Dict[str, Any]):
@@ -252,11 +253,11 @@ class TelegramStarsBot:
         if not post_id or self.db.is_processed(post_id):
             return
 
-        logger.info(f"🔍 Processing Post ID: {post_id}")
+        logger.info(f"🔍 Проверка поста ID: {post_id}")
         
         if self.config["skip_comments"]:
             if await self.lolz.has_comments(post_id):
-                logger.info(f"⏭️ Skipping {post_id} (has comments)")
+                logger.info(f"⏭️ Пропуск {post_id} (уже есть ответы)")
                 self.db.mark_processed(post_id)
                 return
         
@@ -267,7 +268,6 @@ class TelegramStarsBot:
 
         links = TelegramLinkExtractor.extract(post_content)
         if not links:
-            logger.info(f"No links in {post_id}")
             self.db.mark_processed(post_id)
             return
 
@@ -288,50 +288,50 @@ class TelegramStarsBot:
             await self.lolz.create_comment(post_id, reply_message)
 
         self.db.mark_processed(post_id)
-        logger.info(f"✅ Post {post_id} processed.")
+        logger.info(f"✅ Пост {post_id} полностью обработан.")
 
     async def process(self):
-        logger.info(f"🚀 Bot Started. Page: {self.start_page}")
+        logger.info(f"🚀 Бот запущен. Страница: {self.start_page}")
         self.client = Client("secure_session", api_id=self.config["api_id"], api_hash=self.config["api_hash"])
         
         try:
             await self.client.start()
         except Exception as e:
-            logger.critical(f"Telegram Auth Failed: {e}")
+            logger.critical(f"Ошибка авторизации: {e}")
             return
 
         while not stop_event.is_set():
             try:
-                posts, next_page = await self.lolz.get_thread_posts(self.config["forum_thread_id"], self.start_page)
-                
-                if next_page > self.start_page:
-                    self.start_page = next_page
+                posts, _ = await self.lolz.get_thread_posts(self.config["forum_thread_id"], self.start_page)
                 
                 if posts:
+                    logger.info(f"📄 Обработка страницы {self.start_page}...")
                     for post in reversed(posts):
                         if stop_event.is_set(): break
                         await self._process_single_post(post)
+                    
+                    self.start_page += 1 # Переход на следующую страницу
+                    logger.info(f"➡️ Переход к странице {self.start_page}")
                 else:
-                    logger.info("💤 No new posts...")
-                
-                for _ in range(int(self.config["check_interval"])):
-                    if stop_event.is_set(): break
-                    await asyncio.sleep(1)
+                    logger.info("💤 Новых постов нет, ожидание...")
+                    for _ in range(int(self.config["check_interval"])):
+                        if stop_event.is_set(): break
+                        await asyncio.sleep(1)
             
             except Exception as e:
-                logger.error(f"Loop Critical Error: {e}")
+                logger.error(f"Критическая ошибка цикла: {e}")
                 await asyncio.sleep(5)
 
         if self.client and self.client.is_connected:
             await self.client.stop()
-        logger.info("🛑 Bot Stopped.")
+        logger.info("🛑 Бот остановлен.")
 
 class App(ctk.CTk):
     def __init__(self):
         super().__init__()
         self.security = SecurityManager()
         self.db = DatabaseManager()
-        self.title("B1ack Stars v1.0 [lolz.live/b1ackcloud]")
+        self.title("B1ack Stars v1.1 [lolz.live/b1ackcloud]")
         self.geometry("1000x750")
         self.accent_color = DEFAULT_ACCENT
         self.config = self.security.load_config()
@@ -348,7 +348,7 @@ class App(ctk.CTk):
     def _init_sidebar(self):
         self.sidebar = ctk.CTkFrame(self, width=200, corner_radius=0)
         self.sidebar.grid(row=0, column=0, sticky="nsew")
-        self.sidebar.grid_rowconfigure(6, weight=1)
+        self.sidebar.grid_rowconfigure(7, weight=1)
 
         ctk.CTkLabel(self.sidebar, text="B1ack Stars", font=("Impact", 24), text_color=self.accent_color).pack(pady=20)
 
@@ -370,8 +370,17 @@ class App(ctk.CTk):
         self.btn_stop = ctk.CTkButton(self.sidebar, text="STOP", fg_color="#330000", state="disabled", command=self.stop_bot)
         self.btn_stop.pack(pady=5, padx=10, fill="x")
 
+        #  КНОПКА ТЕЛЕГРАМ 
+        self.btn_bug = ctk.CTkButton(self.sidebar, text="🐞 Сообщить о баге", 
+                                     fg_color="transparent", text_color="#FF5555",
+                                     hover_color="#331111", command=self.open_telegram)
+        self.btn_bug.pack(pady=(20, 5), padx=10, fill="x", side="bottom")
+
         self.btn_tray = ctk.CTkButton(self.sidebar, text="⬇ В трей", fg_color="gray20", command=self.minimize_to_tray)
-        self.btn_tray.pack(pady=20, padx=10, fill="x", side="bottom")
+        self.btn_tray.pack(pady=(5, 20), padx=10, fill="x", side="bottom")
+
+    def open_telegram(self):
+        webbrowser.open("https://t.me/B1ackCloudSupp")
 
     def _init_pages(self):
         self.frame_dash = ctk.CTkFrame(self, corner_radius=0, fg_color="transparent")
@@ -502,7 +511,7 @@ class App(ctk.CTk):
         cfg["check_interval"] = 30
         cfg["api_delay"] = 5
         self.security.save_config(cfg)
-        logger.info("💾 Конфигурация зашифрована и сохранена!")
+        logger.info("💾 Конфигурация сохранена!")
 
     def _load_config_to_ui(self):
         if not self.config: return
